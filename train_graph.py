@@ -4,7 +4,7 @@ from graph_model import *
 import copy
 
 
-def train_binary_gcn(source_features,target_features,labels,num_labeled_target,adj,device):
+def train_binary_graph(graph,source_features,target_features,labels,num_labeled_target,adj,avg_degree,device):
 
     source_features = torch.as_tensor(source_features,dtype=torch.float32,device=device)
     target_features = torch.as_tensor(target_features,dtype=torch.float32,device=device)
@@ -30,7 +30,13 @@ def train_binary_gcn(source_features,target_features,labels,num_labeled_target,a
     source_global_indices = torch.arange(num_source,dtype=torch.long,device=device)
     labeled_target_global_indices = torch.arange(num_source,num_source+num_labeled_target,dtype=torch.long,device=device)
 
-    model = BinaryGCN(nfeat=node_features.shape[1],nhid=128,dropout=0.5).to(device)
+    if graph == "gcn":
+        model = BinaryGCN(nfeat=node_features.shape[1],nhid=128,dropout=0.5).to(device)
+    if graph == "graphsage":
+        model = BinaryGraphSAGE(nfeat=node_features.shape[1],nhid=128,dropout=0.5).to(device)
+    if graph == "pna":
+        model = BinaryPNA(nfeat=node_features.shape[1],nhid=128,dropout=0.5,avg_degree=avg_degree).to(device)
+    
     optimizer = torch.optim.Adam(model.parameters(),lr=1e-3,weight_decay=5e-4)
 
     best_state = copy.deepcopy(model.state_dict())
@@ -164,14 +170,14 @@ def select_target_batch(target_uncertainty,target_graph_embeddings,budget,num_la
     # }
     return selected_indices
 
-def train_and_select_with_gcn(source_features,target_features,labels,adj,budget,device,epoch):
+def train_and_select_with_gcn(graph,source_features,target_features,labels,adj,avg_degree,budget,device,epoch):
     
     print("Active round ", epoch)
 
     num_labeled_target = budget*epoch
     print("Số lượng target có nhãn: ", num_labeled_target)
-    model, metadata = train_binary_gcn(source_features,target_features,labels,num_labeled_target,adj,device)
-    print("Done training GCN")
+    model, metadata = train_binary_graph(graph,source_features,target_features,labels,num_labeled_target,adj,avg_degree,device)
+    print("Done training graph")
     
     num_source = len(source_features) - num_labeled_target
     inference = infer_unlabeled_target(

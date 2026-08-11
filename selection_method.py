@@ -8,14 +8,14 @@ import random
 import torch.backends.cudnn as cudnn
 import datetime
 import torch.nn.functional as F
-from train_gcn import *
+from train_graph import *
 
 import warnings
 warnings.filterwarnings("ignore")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-tsk = 'DomainNet/s2r' # 'OfficeHome/Ar2Cl'  'DomainNet/c2p' 
+tsk = 'OfficeHome/Ar2Cl' # 'OfficeHome/Ar2Cl'  'DomainNet/c2p' 
     
 now = datetime.datetime.now()
 timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
@@ -24,7 +24,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # File handler
-file_handler = logging.FileHandler("./log/" + tsk + "/gcn_" + timestamp + ".log",  mode='w')
+file_handler = logging.FileHandler("./log/GraphSAGE/" + tsk + "/graphsage_" + timestamp + ".log",  mode='w')
 file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 
 # Console handler
@@ -341,14 +341,26 @@ def build_source_target_adjacency(source_features,target_features,k_source=5,k_t
 
     return adjacency
 
+def get_average_degree(adj):
+    adj = adj.coalesce()
+    row = adj.indices()[0]
+    num_nodes = adj.shape[0]
+    degree = torch.zeros(num_nodes,device=adj.device,dtype=torch.float32,)
+    degree.scatter_add_(0,row,torch.ones(row.shape[0],device=adj.device))
+    return degree.mean().item()
+
 def gcn(train_x_new,val_x_new,train_y_new,budget,epoch):
     adj = build_source_target_adjacency(source_features=train_x_new,target_features=val_x_new)
+    
+    avg_degree = get_average_degree(adj)
 
     result = train_and_select_with_gcn(
+        graph="graphsage",
         source_features=train_x_new,
         target_features=val_x_new,
         labels=train_y_new,
         adj=adj,
+        avg_degree=avg_degree,
         budget=budget,
         device=device,
         epoch=epoch)
@@ -374,8 +386,8 @@ def active_learning(train_x, train_y, val_x, val_y, one):
     
     src_acc.append(model.model.score(train_x[one_train], train_y[one_train]))
     
-    # n = int(val_x.shape[0]*0.01)
-    n = 100
+    n = int(val_x.shape[0]*0.01)
+    # n = 100
     print("Budget: ", n)
 
     pred_ones = (model.model.predict(val_x)==1).astype(int)
@@ -410,6 +422,7 @@ def active_learning(train_x, train_y, val_x, val_y, one):
     for i in range(4):
         q_idxs = gcn(train_x_new=train_x_new, val_x_new=val_x_new, train_y_new=train_y_new,budget=n,epoch=i)
         # q_idxs = np.argpartition(tar_infl, -n)[-n:]
+        selected_idx.append(q_idxs)
         n_t_l += q_idxs.shape[0]
         weight_BAL = np.r_[np.ones(Ns), Ns/n_t_l*np.ones(n_t_l)] 
          
@@ -472,7 +485,7 @@ if __name__ == "__main__":
     
     start = time.time()
     start_idx = 0
-    for j in range(126):
+    for j in range(65):
         src_acc, acc, ori_one, acc_one, f1, ori_pred, pred, label, lbs, idxs = active_learning(train_x, train_y, val_x, val_y, j)
         ori_ones.append(ori_one)
         acc_ones.append(acc_one)
@@ -491,11 +504,11 @@ if __name__ == "__main__":
 
         logging.info(f"Domain adaptation for class {j} successful")
         logging.info("Original accuracy %4f - Adaptation accuracy %4f", (ori_pred == label).sum() / len(ori_pred), (pred == label).sum() / len(pred))
-
-    np.save("./log/" + tsk + "/herding_selected_idxs_" + timestamp + ".npy", selected_idxs)
-    np.save("./log/" + tsk + "/ori_preds_" + timestamp + ".npy", ori_preds)
-    np.save("./log/" + tsk + "/preds_" + timestamp + ".npy", preds)
-    np.save("./log/" + tsk + "/labels_" + timestamp + ".npy", labels)
+    
+    np.save("./log/GraphSAGE/" + tsk + "/herding_selected_idxs_" + timestamp + ".npy", np.array(selected_idxs))
+    np.save("./log/GraphSAGE/" + tsk + "/ori_preds_" + timestamp + ".npy", np.array(ori_preds))
+    np.save("./log/GraphSAGE/" + tsk + "/preds_" + timestamp + ".npy", np.array(preds))
+    np.save("./log/GraphSAGE/" + tsk + "/labels_" + timestamp + ".npy", np.array(labels))
     logging.info("same start 1.0: %s", tsk)
     logging.info("Original accuracy %4f - Adaptation accuracy %4f", (ori_preds == labels).sum() / len(preds), (preds == labels).sum() / len(preds))
     logging.info("Total time: %4f", time.time()-start)

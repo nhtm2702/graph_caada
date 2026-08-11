@@ -8,7 +8,7 @@ import random
 import torch.backends.cudnn as cudnn
 import datetime
 import torch.nn.functional as F
-from train_gcn import *
+from train_graph import *
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -462,6 +462,14 @@ def normalize_sparse_adjacency(adj):
         device=adj.device,
     ).coalesce()
     
+def get_average_degree(adj):
+    adj = adj.coalesce()
+    row = adj.indices()[0]
+    num_nodes = adj.shape[0]
+    degree = torch.zeros(num_nodes,device=adj.device,dtype=torch.float32,)
+    degree.scatter_add_(0,row,torch.ones(row.shape[0],device=adj.device))
+    return degree.mean().item()
+
 def gcn(train_x_new,val_x_new,train_y_new,budget,epoch):
     adj = build_source_target_adjacency(source_features=train_x_new,target_features=val_x_new)
     
@@ -471,9 +479,8 @@ def gcn(train_x_new,val_x_new,train_y_new,budget,epoch):
         max_source_ratio=0.4,
     )
 
-    # 3. Normalize sau khi cap
     adj = normalize_sparse_adjacency(adj)
-    
+    avg_degree = get_average_degree(adj)
 
     result = train_and_select_with_gcn(
         source_features=train_x_new,
